@@ -1,2 +1,6 @@
 # seismic_prediction
-seismic prediction for a kaggle competition
+this project is for a kaggle competition https://www.kaggle.com/c/LANL-Earthquake-Prediction
+
+#
+
+https://www.kaggle.com/scirpus/andrews-script-plus-a-genetic-program-model
