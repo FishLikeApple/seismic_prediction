@@ -1,0 +1,128 @@
+"""
+This is a try of inception_v4 for a regression task on which DCNN like this isn't used usually. 
+"""
+
+import tensorflow as tf
+import tensorflow.contrib.slim as slim
+import nets.inception_v4 as inception_v4
+
+def multi_learning_rate_optimizor(learning_rate_mapping, loss, tf_optimizor):
+    """This fucntion is to replace an original tf optimizor. 
+       learning_rate_mapping is a list [[a front name part of variable 1, learning rate 1]
+                                        [a front name part of variable 2, learning rate 2]
+                                         ...];
+       loss is just a loss of the original tf optimizor;
+       tf_optimizor is the function of the original tf optimizor."""
+    var_list = []
+    total_var_list = []
+    opt = []
+    grads = []
+    tran_op_list = []
+    all_trainable_variables = []
+    trainable_variables = tf.trainable_variables().copy()
+    learning_rate_for_other = 0
+
+    for i in range(len(learning_rate_mapping)):
+        vars = []
+        for var in trainable_variables:  #this part may be improved later.
+            if var.name.startswith(learning_rate_mapping[i][0]):
+                vars.append(var)
+                #trainable_variables.remove(var)  #①
+
+        if len(vars) == 0:
+            print("No variable under %s is found. By default the ccorresponding learning \
+rate will be applied to all ohter trainable variables not defined in learning_rate_mappin\
+g."%(learning_rate_mapping[i][0]))
+            learning_rate_for_other = learning_rate_mapping[i][1]
+        else:
+            var_list.append(vars)
+            all_trainable_variables.extend(vars)
+            opt.append(tf_optimizor(learning_rate_mapping[i][1]))
+            for var in vars:
+                trainable_variables.remove(var)
+
+    #deal with other variables
+    if trainable_variables != []:
+        print("variables not defined in learning_rate_mapping are:")
+        for var in trainable_variables:
+            print(var)
+        var_list.append(trainable_variables)
+        all_trainable_variables.extend(trainable_variables)
+        opt.append(tf_optimizor(learning_rate_for_other))
+
+    start_point = 0
+    grad_list = []
+    grads = tf.gradients(loss, all_trainable_variables)
+    for i in range(len(learning_rate_mapping)):
+        end_point = start_point + len(var_list[i])
+        grad_list.append(grads[start_point:end_point])
+        tran_op_list.append(opt[i].apply_gradients(zip(grad_list[i], var_list[i])))
+        start_point = end_point
+        if i == 0:
+            train_op = tran_op_list[i] 
+        else:
+            train_op = tf.group(train_op, tran_op_list[i])
+
+    return train_op
+
+#下函数实现inception_v4迁移学习模型的创建。参数images和labels为图片样本输入和对应的标签，可为占位符。
+def inception_v4_inference(images, labels, number_of_calsses, ckpt_file, learning_rate_mapping,
+                           forget_learning=False, is_training=True, dropout_keep_prob=0.8,
+                           output_layer_dimension=1024):
+    fine_turned_variables = []
+    
+    G = 0.01
+    trainable_scopes = ["InceptionV4/AuxLogits", "InceptionV4/Logits"]
+    device_setting = tf.get_default_graph().device('/device:CPU:0')
+
+    #judge device setting
+    if testC7.on_cloud == True:
+        device_setting = open("logs.txt", "a")
+
+    with device_setting:
+        with slim.arg_scope(inception_v4.inception_v4_arg_scope(use_batch_norm=False)):   #batch norm is not used
+            output_layer, end_points = inception_v4.inception_v4(images, output_layer_dimension, 
+                                                                 is_training, dropout_keep_prob)   #1024 is the dimension number of embedding
+
+        for var in tf.trainable_variables(): 
+                if var.op.name.startswith(trainable_scopes[0]) or var.op.name.startswith(trainable_scopes[1]): 
+                    tf.add_to_collection("trainable_variables_for_now", var)
+                else:
+                    fine_turned_variables.append(var)
+
+        #tf.GraphKeys.TRAINABLE_VARIABLES = "trainable_variables_for_now" 
+
+        #loading the model
+        if forget_learning:
+            load_fn=slim.assign_from_checkpoint_fn(ckpt_file, fine_turned_variables, True)  
+        else:
+            load_fn=slim.assign_from_checkpoint_fn(ckpt_file, tf.trainable_variables(), True)  
+        
+        #define a new structure
+        with tf.variable_scope('final_network'):
+            final_output = slim.fully_connected(output_layer, number_of_calsses, activation_fn=None)
+            final_output = tf.nn.relu(final_output)
+            end_points["final_output"] = final_output
+  
+        #define losses
+        tf.losses.absolute_difference(labels, final_output)
+        #training_step = multi_learning_rate_optimizor(
+        #    learning_rate_mapping, tf.losses.get_total_loss(), tf.train.RMSPropOptimizer)  
+        training_step = slim.learning.create_train_op(tf.losses.get_total_loss(), 
+                                                      tf.train.RMSPropOptimizer(testC7.learning_rate*0.1))
+
+        #correct_prediction = tf.equal(tf.argmax(final_output, 1), labels)
+        evaluation_step = 3# tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
+
+    sess = tf.Session(config=tf.ConfigProto(allow_soft_placement=True))
+    sess.run(tf.global_variables_initializer())
+    sess.run(tf.local_variables_initializer())
+    #load_fn(sess)
+
+    #返回创建的对话，训练步骤和评估步骤
+    return sess, training_step, evaluation_step, end_points
+
+unified_shape = [299, 299, 3]
+def DCNN_test():
+    image_tensor = tf.placeholder(tf.float64, [None, ])
+    inception_v4_inference()
